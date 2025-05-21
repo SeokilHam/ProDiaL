@@ -18,47 +18,9 @@ import pdb
 logging.basicConfig(format = "[%(asctime)s][%(levelname)s][Message] - %(message)s", level = logging.INFO)
 logging.Formatter.converter = lambda *args: datetime.now(tz=timezone("Asia/Seoul")).timetuple()
 
-def setup_for_distributed(is_master):
-    """
-    This function disables printing when not in master process
-    """
-    import builtins as __builtin__
-    builtin_print = __builtin__.print
-
-    def print(*args, **kwargs):
-        force = kwargs.pop('force', False)
-        if is_master or force:
-            builtin_print(*args, **kwargs)
-
-    __builtin__.print = print
-
-def init_distributed_mode(args):
-    if 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
-        args.rank = int(os.environ["RANK"])
-        args.world_size = int(os.environ['WORLD_SIZE'])
-        args.gpu = int(os.environ['LOCAL_RANK'])
-    elif 'SLURM_PROCID' in os.environ:
-        args.rank = int(os.environ['SLURM_PROCID'])
-        args.gpu = args.rank % torch.cuda.device_count()
-    else:
-        print('Not using distributed mode')
-        args.distributed = False
-        return
-
-    args.distributed = True
-
-    torch.cuda.set_device(args.gpu)
-    args.dist_backend = 'nccl'
-    print('| distributed init (rank {}): {}'.format(
-        args.rank, args.dist_url), flush=True)
-    torch.distributed.init_process_group(backend=args.dist_backend, init_method=args.dist_url,
-                                         world_size=args.world_size, rank=args.rank)
-    torch.distributed.barrier()
-    setup_for_distributed(args.rank == 0)
-
 def get_model_and_tokenizer(args):
     logging.info(f"model | {args.model_path} | tokenizer: {args.tokenizer_path}")
-    model = MambaLMHeadModel.from_pretrained(args.model_path, dtype=torch.float32, device="cuda", strict=False)
+    model = MambaLMHeadModel.from_pretrained(args.model_path, dtype=torch.float32, device="cuda", strict=False, r_b1=args.r_b1, r_b2=args.r_b2)
 
     tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_path)
     tokenizer.eos_token = "<|endoftext|>"
@@ -75,13 +37,10 @@ def train(args):
     torch.backends.cudnn.benchmark = True
     # Loading config, model and tokenizer
 
-    # init_distributed_mode(args)
-
     model, tokenizer = get_model_and_tokenizer(args)
 
     lora_config = LoraConfig(
-        r=16,  # Low-rank dimension
-        lora_alpha=16,  # Scaling factor
+        r=args.off_diagonal_rank,  # Low-rank dimension
         target_modules=["in_proj", "out_proj"],  # Apply LoRA to attention layers
         lora_dropout=args.dropout_rate,  # Dropout rate for LoRA layers
         task_type=TaskType.QUESTION_ANS,  # Define the task type
@@ -132,6 +91,7 @@ def train(args):
         tokenizer=tokenizer,
         optimizers=(optimizer, lr_scheduler),
         data_collator=data_collator,
+        config_path=args.config_path,
         args=TrainingArguments(
             learning_rate=args.learning_rate,
             num_train_epochs=args.num_epochs,
@@ -154,7 +114,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Llama-Instruction-Tuning")
 
     # Dataset names
-    parser.add_argument("--instruction_datasets", type=str, default="[alpaca,cot-collection]", help="instruction datasets | possible datasets [alpaca, cot-collections, slimorca, openorca-multiplechoice, arc, mmlu, gsm8k, winogrande, piqa, siqa]")
+    parser.add_argument("--instruction_datasets", type=str, default="[alpaca,cot-collection]", help="instruction datasets | possible datasets [hellaswag, arc-e, arc-c, gsm8k, winogrande, piqa, siqa]")
     parser.add_argument("--dataset_sizes", type=str, default="[all]", help="instruction dataset ratios")
 
     # Random Seed
@@ -200,9 +160,11 @@ if __name__ == "__main__":
     # Logging
     parser.add_argument("--logging_steps", type=int, default=100, help="Number of update steps between two logs if logging_strategy is 'step")
     
-    # DDP
-    parser.add_argument("--local_rank", type=int, default=0)
-    parser.add_argument('--dist_url', default='env://', help='url used to set up distributed training')
+    # ProDiaL
+    parser.add_argument("--r_b1", type=int, default=None)
+    parser.add_argument("--r_b2", type=int, default=None)
+    parser.add_argument("--off_diagonal_rank", type=int, default=16)
+    parser.add_argument('--config_path', default='')
 
     args = parser.parse_args()
 

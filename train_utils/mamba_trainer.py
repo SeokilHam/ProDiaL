@@ -28,6 +28,10 @@ def set_seed(seed):
     random.seed(seed)
 
 class MambaTrainer(Trainer):
+    def __init__(self, *args, config_path=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.config_path = config_path
+
     def compute_loss(self, model, inputs, return_outputs=False):
         # from transformers import AutoTokenizer
         # tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-neox-20b")
@@ -48,36 +52,36 @@ class MambaTrainer(Trainer):
         updated_model = copy.deepcopy(self.model)
         for i in range(len(updated_model.backbone.layers)):
             # # # # in_ProDiaL
-            R = updated_model.backbone.layers[i].mixer.in_oft_r
-            S = updated_model.backbone.layers[i].mixer.in_oft_s
+            R = updated_model.backbone.layers[i].mixer.in_ProDiaL_r
+            S = updated_model.backbone.layers[i].mixer.in_ProDiaL_s
             in_orth_rotation = R
-            in_oft_mat = torch.block_diag(*[r_i for r_i in in_orth_rotation])
-            identity_matrix = torch.eye(in_oft_mat.shape[0], device=in_oft_mat.device)
-            in_oft_mat = in_oft_mat * (1 - identity_matrix) + identity_matrix - F.relu(torch.diag(torch.diag(in_oft_mat)))
+            in_ProDiaL_mat = torch.block_diag(*[r_i for r_i in in_orth_rotation])
+            identity_matrix = torch.eye(in_ProDiaL_mat.shape[0], device=in_ProDiaL_mat.device)
+            in_ProDiaL_mat = in_ProDiaL_mat * (1 - identity_matrix) + identity_matrix - F.relu(torch.diag(torch.diag(in_ProDiaL_mat)))
             in_scale = torch.diag(S)
 
-            updated_model.backbone.layers[i].mixer.in_proj.weight.data = in_scale @ updated_model.backbone.layers[i].mixer.in_proj.weight @ in_oft_mat # 768
-            del updated_model.backbone.layers[i].mixer.in_oft_r
-            del updated_model.backbone.layers[i].mixer.in_oft_s
+            updated_model.backbone.layers[i].mixer.in_proj.weight.data = in_scale @ updated_model.backbone.layers[i].mixer.in_proj.weight @ in_ProDiaL_mat # 768
+            del updated_model.backbone.layers[i].mixer.in_ProDiaL_r
+            del updated_model.backbone.layers[i].mixer.in_ProDiaL_s
 
             # # out_ProDiaL
-            R = updated_model.backbone.layers[i].mixer.out_oft_r
-            S = updated_model.backbone.layers[i].mixer.out_oft_s
+            R = updated_model.backbone.layers[i].mixer.out_ProDiaL_r
+            S = updated_model.backbone.layers[i].mixer.out_ProDiaL_s
             out_orth_rotation = R
-            out_oft_mat = torch.block_diag(*[r_i for r_i in out_orth_rotation])
-            identity_matrix = torch.eye(out_oft_mat.shape[0], device=out_oft_mat.device)
-            out_oft_mat = out_oft_mat * (1 - identity_matrix) + identity_matrix - F.relu(torch.diag(torch.diag(out_oft_mat)))
+            out_ProDiaL_mat = torch.block_diag(*[r_i for r_i in out_orth_rotation])
+            identity_matrix = torch.eye(out_ProDiaL_mat.shape[0], device=out_ProDiaL_mat.device)
+            out_ProDiaL_mat = out_ProDiaL_mat * (1 - identity_matrix) + identity_matrix - F.relu(torch.diag(torch.diag(out_ProDiaL_mat)))
             out_scale = torch.diag(S)
 
-            updated_model.backbone.layers[i].mixer.out_proj.weight.data = out_scale @ updated_model.backbone.layers[i].mixer.out_proj.weight @ out_oft_mat # 1536
-            del updated_model.backbone.layers[i].mixer.out_oft_r
-            del updated_model.backbone.layers[i].mixer.out_oft_s
+            updated_model.backbone.layers[i].mixer.out_proj.weight.data = out_scale @ updated_model.backbone.layers[i].mixer.out_proj.weight @ out_ProDiaL_mat # 1536
+            del updated_model.backbone.layers[i].mixer.out_ProDiaL_r
+            del updated_model.backbone.layers[i].mixer.out_ProDiaL_s
 
         merged_model = updated_model.merge_and_unload()
         merged_model.save_pretrained(f"{output_dir}")
 
         # Save the configuration of the model
-        config_path = "/mnt/server15_hard1/seokil/mamba/configs/130m/config.json"
+        config_path = self.config_path + "/config.json"
         shutil.copy(config_path, output_dir)
         print(f"Save model in {output_dir}")
 

@@ -7,7 +7,7 @@
 #SBATCH --gres=gpu:1
 
 # Insturction-Tuning command example
-python train.py \
+CUDA_VISIBLE_DEVICES=0 python train.py \
     --model_path="state-spaces/mamba-130m" \
     --tokenizer_path="EleutherAI/gpt-neox-20b" \
     --instruction_datasets="[hellaswag]" \
@@ -22,4 +22,7 @@ python train.py \
     --learning_rate=1e-4 \
     --dropout_rate=0.1 \
     --logging_steps=100 \
-    --config_path="configs/130m"
+    --config_path="configs/130m" \
+    --r_b1=768 \
+    --r_b2=1536 \
+    --off_diagonal_rank=16 \

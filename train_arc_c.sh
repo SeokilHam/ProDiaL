@@ -7,12 +7,12 @@
 #SBATCH --gres=gpu:1
 
 # Insturction-Tuning command example
-export CUDA_VISIBLE_DEVICES=1
+export CUDA_VISIBLE_DEVICES=0
 python train.py \
     --model_path="state-spaces/mamba-130m" \
     --tokenizer_path="EleutherAI/gpt-neox-20b" \
     --instruction_datasets="[arc-c]" \
-    --output_dir="/mnt/server5_hard2/seokil/mamba_output/mamba-SSM-Proj-DoRA16/arc-c/130m/1e-5" \
+    --output_dir="outputs" \
     --random_seed=42 \
     --sequence_max_length=512 \
     --save_steps=5000 \
@@ -22,4 +22,8 @@ python train.py \
     --weight_decay=0.01 \
     --learning_rate=1e-5 \
     --dropout_rate=0.1 \
-    --logging_steps=100
+    --logging_steps=100 \
+    --config_path="configs/130m" \
+    --r_b1=64 \
+    --r_b2=64 \
+    --off_diagonal_rank=8 \

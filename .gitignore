@@ -20,3 +20,4 @@ finetune2.py
 proj_weight_analysis.py
 evaluate*
 causal-conv1d
+outputs

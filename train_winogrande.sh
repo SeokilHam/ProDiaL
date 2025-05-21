@@ -12,7 +12,7 @@ python train.py \
     --model_path="state-spaces/mamba-130m" \
     --tokenizer_path="EleutherAI/gpt-neox-20b" \
     --instruction_datasets="[winogrande_xl]" \
-    --output_dir="/mnt/server5_hard2/seokil/mamba_output/mamba-SSM-LoRA16/winogrande/130m/5e-6" \
+    --output_dir="outputs" \
     --random_seed=42 \
     --sequence_max_length=512 \
     --save_steps=5000 \
@@ -22,4 +22,8 @@ python train.py \
     --weight_decay=0.01 \
     --learning_rate=5e-6 \
     --dropout_rate=0.1 \
-    --logging_steps=100
+    --logging_steps=100 \
+    --config_path="configs/130m" \
+    --r_b1=768 \
+    --r_b2=1536 \
+    --off_diagonal_rank=8 \

@@ -63,6 +63,8 @@ class Mamba2(nn.Module, PyTorchModelHubMixin):
         sequence_parallel=True,
         device=None,
         dtype=None,
+        r_b1=None,
+        r_b2=None,
     ):
         factory_kwargs = {"device": device, "dtype": dtype}
         super().__init__()
@@ -139,13 +141,12 @@ class Mamba2(nn.Module, PyTorchModelHubMixin):
         self.D = nn.Parameter(torch.ones(self.d_ssm if self.D_has_hdim else self.nheads, device=device))
         self.D._no_weight_decay = True
 
-        r1 = 128 # proj 64 in_proj 32 out_proj 128
-        r2 = 2048
-        # import pdb; pdb.set_trace()
-        # self.in_oft_r = nn.Parameter(torch.zeros(math.ceil(self.d_model / r1), math.ceil(self.d_model / r1)).unsqueeze(0).repeat(r1, 1, 1)) # 768 #1024 #2048
-        # self.in_oft_s = nn.Parameter(torch.ones(d_in_proj)) # 3072
-        # self.out_oft_r = nn.Parameter(torch.zeros(math.ceil(self.d_inner / r2), math.ceil(self.d_inner / r2)).unsqueeze(0).repeat(r2, 1, 1)) # 1536 #2048 #4096
-        # self.out_oft_s = nn.Parameter(torch.ones(self.d_model)) # 768
+        if r_b1 is not None:
+            self.in_ProDiaL_r = nn.Parameter(torch.zeros(math.ceil(self.d_model / r_b1), math.ceil(self.d_model / r_b1)).unsqueeze(0).repeat(r_b1, 1, 1))
+            self.in_ProDiaL_s = nn.Parameter(torch.ones(d_in_proj)) 
+        if r_b2 is not None:
+            self.out_ProDiaL_r = nn.Parameter(torch.zeros(math.ceil(self.d_inner / r_b2), math.ceil(self.d_inner / r_b2)).unsqueeze(0).repeat(r_b2, 1, 1))
+            self.out_ProDiaL_s = nn.Parameter(torch.ones(self.d_model)) 
 
         if self.rmsnorm:
             assert RMSNormGated is not None
@@ -183,18 +184,18 @@ class Mamba2(nn.Module, PyTorchModelHubMixin):
                 out, _, _ = self.step(u, conv_state, ssm_state)
                 return out
 
-        # in_orth_rotation = self.in_oft_r
-        # in_oft_mat = torch.block_diag(*[r_i for r_i in in_orth_rotation])
-        # identity_matrix = torch.eye(in_oft_mat.shape[0], device=in_oft_mat.device)
-        # in_oft_mat = in_oft_mat * (1 - identity_matrix) + identity_matrix - F.relu(torch.diag(torch.diag(in_oft_mat)))
+        in_orth_rotation = self.in_ProDiaL_r
+        in_ProDiaL_mat = torch.block_diag(*[r_i for r_i in in_orth_rotation])
+        identity_matrix = torch.eye(in_ProDiaL_mat.shape[0], device=in_ProDiaL_mat.device)
+        in_ProDiaL_mat = in_ProDiaL_mat * (1 - identity_matrix) + identity_matrix - F.relu(torch.diag(torch.diag(in_ProDiaL_mat)))
 
-        # out_orth_rotation = self.out_oft_r
-        # out_oft_mat = torch.block_diag(*[r_i for r_i in out_orth_rotation])
-        # identity_matrix = torch.eye(out_oft_mat.shape[0], device=out_oft_mat.device)
-        # out_oft_mat = out_oft_mat * (1 - identity_matrix) + identity_matrix - F.relu(torch.diag(torch.diag(out_oft_mat)))
+        out_orth_rotation = self.out_ProDiaL_r
+        out_ProDiaL_mat = torch.block_diag(*[r_i for r_i in out_orth_rotation])
+        identity_matrix = torch.eye(out_ProDiaL_mat.shape[0], device=out_ProDiaL_mat.device)
+        out_ProDiaL_mat = out_ProDiaL_mat * (1 - identity_matrix) + identity_matrix - F.relu(torch.diag(torch.diag(out_ProDiaL_mat)))
 
-        zxbcdt = self.in_proj(u)  # (B, L, d_in_proj) or (B * L, d_in_proj)
-        # zxbcdt = DiaL_forward(self.in_proj, in_oft_mat, torch.diag(self.in_oft_s), u)
+        # zxbcdt = self.in_proj(u)  # (B, L, d_in_proj) or (B * L, d_in_proj)
+        zxbcdt = ProDiaL_forward(self.in_proj, in_ProDiaL_mat, torch.diag(self.in_ProDiaL_s), u)
 
         if seqlen_og is not None:
             zxbcdt = rearrange(zxbcdt, "(b l) d -> b l d", l=seqlen)
@@ -292,8 +293,8 @@ class Mamba2(nn.Module, PyTorchModelHubMixin):
                 y = torch.cat([F.silu(z0) * x0, y], dim=-1)
             if seqlen_og is not None:
                 y = rearrange(y, "b l d -> (b l) d")
-            out = self.out_proj(y)
-            # out = DiaL_forward(self.out_proj, out_oft_mat, torch.diag(self.out_oft_s), y)
+            # out = self.out_proj(y)
+            out = ProDiaL_forward(self.out_proj, out_ProDiaL_mat, torch.diag(self.out_ProDiaL_s), y)
         return out
 
     def step(self, hidden_states, conv_state, ssm_state):
@@ -403,9 +404,9 @@ class Mamba2(nn.Module, PyTorchModelHubMixin):
                 ssm_state.zero_()
         return conv_state, ssm_state
 
-def DiaL_forward(LoRAModel, DiaL, scale, x, *args, **kwargs):
+def ProDiaL_forward(LoRAModel, ProDiaL, scale, x, *args, **kwargs):
     adapter_names = kwargs.pop("adapter_names", None)
-    result = x @ (scale @ LoRAModel.base_layer.weight @ DiaL).T
+    result = x @ (scale @ LoRAModel.base_layer.weight @ ProDiaL).T
 
     torch_result_dtype = result.dtype
     for active_adapter in LoRAModel.active_adapters:

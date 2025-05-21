@@ -28,9 +28,9 @@ except ImportError:
     RMSNorm, layer_norm_fn, rms_norm_fn = None, None, None
 
 
-def ProDiaL_forward(LoRAModel, DiaL, scale, x, *args, **kwargs):
+def ProDiaL_forward(LoRAModel, ProDiaL, scale, x, *args, **kwargs):
         adapter_names = kwargs.pop("adapter_names", None)
-        result = x @ (scale @ LoRAModel.base_layer.weight @ DiaL).T
+        result = x @ (scale @ LoRAModel.base_layer.weight @ ProDiaL).T
 
         torch_result_dtype = result.dtype
         for active_adapter in LoRAModel.active_adapters:
@@ -67,9 +67,12 @@ class Mamba(nn.Module):
         layer_idx=None,
         device=None,
         dtype=None,
+        r_b1=None,
+        r_b2=None,
     ):
         factory_kwargs = {"device": device, "dtype": dtype}
         super().__init__()
+
         self.d_model = d_model # 768
         self.d_state = d_state # 16
         self.d_conv = d_conv # 4
@@ -135,31 +138,14 @@ class Mamba(nn.Module):
         self.D = nn.Parameter(torch.ones(self.d_inner, device=device))  # Keep in fp32
         self.D._no_weight_decay = True
 
-        r1 = 64 # proj 64 in_proj 32 out_proj 128
-        r2 = 512
-        self.in_oft_r = nn.Parameter(torch.zeros(math.ceil(self.d_model / r1), math.ceil(self.d_model / r1)).unsqueeze(0).repeat(r1, 1, 1)) # 768 # 1024 # 2048
-        self.in_oft_s = nn.Parameter(torch.ones(self.d_inner * 2)) # 3072 # 6144
-        self.out_oft_r = nn.Parameter(torch.zeros(math.ceil(self.d_inner / r2), math.ceil(self.d_inner / r2)).unsqueeze(0).repeat(r2, 1, 1)) # 1536
-        self.out_oft_s = nn.Parameter(torch.ones(self.d_model)) # 768 # 1536
+        if r_b1 is not None:
+            self.in_ProDiaL_r = nn.Parameter(torch.zeros(math.ceil(self.d_model / r_b1), math.ceil(self.d_model / r_b1)).unsqueeze(0).repeat(r_b1, 1, 1))
+            self.in_ProDiaL_s = nn.Parameter(torch.ones(self.d_inner * 2)) 
+        if r_b2 is not None:
+            self.out_ProDiaL_r = nn.Parameter(torch.zeros(math.ceil(self.d_inner / r_b2), math.ceil(self.d_inner / r_b2)).unsqueeze(0).repeat(r_b2, 1, 1))
+            self.out_ProDiaL_s = nn.Parameter(torch.ones(self.d_model)) 
 
         self.out_proj = nn.Linear(self.d_inner, self.d_model, bias=bias, **factory_kwargs)
-
-    def _cayley_batch(self, data):
-        """
-        Perform the Cayley parametrization on a batch of skew-symmetric matrices.
-
-        Args:
-            data: A batch of skew-symmetric matrices of shape (b, r, c).
-        """
-        b, r, c = data.shape
-        # Ensure the input matrix is skew-symmetric
-        skew_mat = 0.5 * (data - data.transpose(1, 2))
-        id_mat = torch.eye(r, device=data.device).unsqueeze(0).expand(b, r, c)  # noqa: E741
-
-        # Perform the Cayley parametrization
-        D = torch.linalg.solve(id_mat + skew_mat, id_mat - skew_mat, left=False)
-
-        return D
 
     def forward(self, hidden_states, inference_params=None):
         """
@@ -178,24 +164,23 @@ class Mamba(nn.Module):
 
         # We do matmul and transpose BLH -> HBL at the same time
 
-        # in_orth_rotation = self.in_oft_r
-        # in_oft_mat = torch.block_diag(*[r_i for r_i in in_orth_rotation])
-        # identity_matrix = torch.eye(in_oft_mat.shape[0], device=in_oft_mat.device)
-        # in_oft_mat = in_oft_mat * (1 - identity_matrix) + identity_matrix - F.relu(torch.diag(torch.diag(in_oft_mat)))
+        in_orth_rotation = self.in_ProDiaL_r
+        in_ProDiaL_mat = torch.block_diag(*[r_i for r_i in in_orth_rotation])
+        identity_matrix = torch.eye(in_ProDiaL_mat.shape[0], device=in_ProDiaL_mat.device)
+        in_ProDiaL_mat = in_ProDiaL_mat * (1 - identity_matrix) + identity_matrix - F.relu(torch.diag(torch.diag(in_ProDiaL_mat)))
 
-        out_orth_rotation = self.out_oft_r
-        out_oft_mat = torch.block_diag(*[r_i for r_i in out_orth_rotation])
-        identity_matrix = torch.eye(out_oft_mat.shape[0], device=out_oft_mat.device)
-        out_oft_mat = out_oft_mat * (1 - identity_matrix) + identity_matrix - F.relu(torch.diag(torch.diag(out_oft_mat)))
+        out_orth_rotation = self.out_ProDiaL_r
+        out_ProDiaL_mat = torch.block_diag(*[r_i for r_i in out_orth_rotation])
+        identity_matrix = torch.eye(out_ProDiaL_mat.shape[0], device=out_ProDiaL_mat.device)
+        out_ProDiaL_mat = out_ProDiaL_mat * (1 - identity_matrix) + identity_matrix - F.relu(torch.diag(torch.diag(out_ProDiaL_mat)))
 
-        xz = rearrange(self.in_proj(rearrange(hidden_states, "b l d -> (b l) d")),  "(b l) d -> b d l", l=seqlen)
-        # xz = rearrange(ProDiaL_forward(self.in_proj, in_oft_mat, torch.diag(self.in_oft_s), rearrange(hidden_states, "b l d -> (b l) d")),  "(b l) d -> b d l", l=seqlen)
+        # xz = rearrange(self.in_proj(rearrange(hidden_states, "b l d -> (b l) d")),  "(b l) d -> b d l", l=seqlen)
+        xz = rearrange(ProDiaL_forward(self.in_proj, in_ProDiaL_mat, torch.diag(self.in_ProDiaL_s), rearrange(hidden_states, "b l d -> (b l) d")),  "(b l) d -> b d l", l=seqlen)
         if self.in_proj.bias is not None:
             xz = xz + rearrange(self.in_proj.bias.to(dtype=xz.dtype), "d -> d 1")
 
         A = -torch.exp(self.A_log.float())  # (d_inner, d_state)
         # In the backward pass we write dx and dz next to each other to avoid torch.cat
-        # import pdb; pdb.set_trace()
         if self.use_fast_path and causal_conv1d_fn is not None and inference_params is None:  # Doesn't support outputting the states
             out = mamba_inner_fn(
                 xz,
@@ -204,9 +189,6 @@ class Mamba(nn.Module):
                 self.x_proj.weight,
                 self.dt_proj.weight,
                 self.out_proj.weight,
-                # (self.out_proj.weight @ self.out_DiaL1), # out_DiaL 1536
-                # (out_DiaL_final_matrix2 @ self.out_proj.weight), # out_DiaL 768
-                # (out_linear_transform @ self.out_proj.weight @ in_linear_transform), # both
                 self.out_proj.bias,
                 A,
                 None,  # input-dependent B
@@ -260,8 +242,7 @@ class Mamba(nn.Module):
                 y, last_state = y
                 ssm_state.copy_(last_state)
             y = rearrange(y, "b d l -> b l d")
-            # out = self.out_proj(y)
-            out = ProDiaL_forward(self.out_proj, out_oft_mat, torch.diag(self.out_oft_s), y)
+            out = ProDiaL_forward(self.out_proj, out_ProDiaL_mat, torch.diag(self.out_ProDiaL_s), y)
         return out
 
     def step(self, hidden_states, conv_state, ssm_state):
