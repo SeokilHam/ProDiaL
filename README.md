@@ -1,6 +1,7 @@
 # Parameter Efficient Mamba Tuning via Projector-targeted Diagonal-centric Linear Transformation
 
 **Authors:** Seokil Ham, Hee-Seon Kim, Sangmin Woo, Changick Kim
+
 **Paper:** https://arxiv.org/abs/2411.15224
 
 ## Installation
