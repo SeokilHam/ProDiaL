@@ -19,7 +19,7 @@ pip install -r requirements.txt
 
 ## Usage
 
-### 1. Set Hyperparameters in ProDiaL
+#### 1. Set Hyperparameters in ProDiaL
 
 ``` python
 CUDA_VISIBLE_DEVICES=0 python train.py \
@@ -43,7 +43,7 @@ CUDA_VISIBLE_DEVICES=0 python train.py \
     --off_diagonal_rank=16 \
 ```
 
-### Run bash file
+#### Run bash file
 
 ```
 bash train_hellaswag.sh
