@@ -68,7 +68,7 @@ def train(args):
     # Extracting model parameters from huggingface model
     params = []
     for name, param in model.named_parameters():
-        if 'oft' in name or 'lora' in name:
+        if 'ProDiaL' in name or 'lora' in name:
             param.requires_grad = True
             params.append(param)
             logging.info(name)
